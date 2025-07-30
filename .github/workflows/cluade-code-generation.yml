@@ -204,61 +204,52 @@ jobs:
                   ]
               }
               
-              # Use only Claude Sonnet 4 as requested
-              models_to_try = [
-                  model_id,  # User configured model (Claude Sonnet 4)
-                  'anthropic.claude-3-5-sonnet-20240620-v1:0',  # Claude 3.5 Sonnet
-                  'anthropic.claude-3-sonnet-20240229-v1:0',  # Claude 3 Sonnet fallback
-              ]
+              # Try user's configured model first
+              print(f"Trying user configured model: {model_id}")
               
-              response = None
-              last_error = None
+              try:
+                  # Claude models - use user's configured model ID
+                  response = client.invoke_model(
+                      body=json.dumps(body),
+                      modelId=model_id,
+                      accept='application/json',
+                      contentType='application/json'
+                  )
+                  response_body = json.loads(response.get('body').read())
+                  return response_body['content'][0]['text']
+                  
+              except Exception as e:
+                  error_str = str(e)
+                  print(f"User model failed: {error_str}")
+                  
+                  # Check for specific error types and provide helpful messages
+                  if "on-demand throughput isn't supported" in error_str:
+                      raise Exception(f"""
+              ERROR: Your Claude Sonnet 4 model requires an inference profile, not direct model ID access.
               
-              for model_attempt in models_to_try:
-                  if not model_attempt:  # Skip None/empty values
-                      continue
-                      
-                  try:
-                      print(f"Trying model: {model_attempt}")
-                      
-                      # For Amazon Titan, use different request format
-                      if 'amazon.titan' in model_attempt:
-                          titan_body = {
-                              "inputText": prompt,
-                              "textGenerationConfig": {
-                                  "maxTokenCount": 8000,
-                                  "stopSequences": [],
-                                  "temperature": 0,
-                                  "topP": 1
-                              }
-                          }
-                          response = client.invoke_model(
-                              body=json.dumps(titan_body),
-                              modelId=model_attempt,
-                              accept='application/json',
-                              contentType='application/json'
-                          )
-                          # Parse Titan response differently
-                          response_body = json.loads(response.get('body').read())
-                          return response_body['results'][0]['outputText']
-                      else:
-                          # Claude models
-                          response = client.invoke_model(
-                              body=json.dumps(body),
-                              modelId=model_attempt,
-                              accept='application/json',
-                              contentType='application/json'
-                          )
-                          response_body = json.loads(response.get('body').read())
-                          return response_body['content'][0]['text']
-                      
-                  except Exception as e:
-                      print(f"Model {model_attempt} failed: {str(e)[:100]}...")
-                      last_error = e
-                      continue
+              Please update your AWS_BEDROCK_MODEL_ID secret to use an inference profile ARN instead of the direct model ID.
               
-              # If all models failed, raise the last error
-              raise Exception(f"All models failed. Last error: {last_error}")
+              The format should be something like:
+              arn:aws:bedrock:us-east-1:123456789012:inference-profile/your-profile-name
+              
+              Or use a cross-region inference profile like:
+              us.anthropic.claude-3-5-sonnet-20240620-v1:0
+              
+              Contact your AWS administrator to set up the proper inference profile for Claude Sonnet 4.
+              
+              Original error: {error_str}
+              """)
+                  elif "Input is too long" in error_str:
+                      raise Exception(f"""
+              ERROR: The input context is too long for the model.
+              
+              This can happen when the codebase analysis generates too much content.
+              Try reducing the task description or the codebase context size.
+              
+              Original error: {error_str}
+              """)
+                  else:
+                      raise Exception(f"Model invocation failed: {error_str}")
           
           def create_branch_and_commit(branch_name, generated_content):
               """Create a new branch and commit the generated code"""
