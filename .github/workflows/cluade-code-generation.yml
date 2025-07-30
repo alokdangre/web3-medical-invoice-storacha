@@ -161,7 +161,7 @@ jobs:
               client = get_bedrock_client()
               
               prompt = f"""
-          You are an expert software developer working on an Ionic React TypeScript application for government billing/invoicing.
+          You are an expert software developer working on a React TypeScript application for web3 medical invoice storage.
           
           TASK: {task_description}
           
@@ -177,16 +177,18 @@ jobs:
           
           Follow these guidelines:
           - Use TypeScript and React hooks
-          - Follow Ionic React patterns and components
           - Maintain consistency with existing code style
           - Include proper error handling
           - Add appropriate TypeScript types
           - Use existing utilities and patterns from the codebase
-          - Ensure mobile-first responsive design
+          - Focus on web3 integration and secure data handling
           
           Format your response clearly with sections for each file change.
           """
-          
+              
+              # Try to use inference profile first, fallback to direct model ID
+              model_id = os.environ.get('AWS_BEDROCK_MODEL_ID', 'anthropic.claude-3-sonnet-20240229-v1:0')
+              
               body = {
                   "anthropic_version": "bedrock-2023-05-31",
                   "max_tokens": 8000,
@@ -198,12 +200,45 @@ jobs:
                   ]
               }
               
-              response = client.invoke_model(
-                  body=json.dumps(body),
-                  modelId=os.environ.get('AWS_BEDROCK_MODEL_ID', 'anthropic.claude-3-sonnet-20240229-v1:0'),
-                  accept='application/json',
-                  contentType='application/json'
-              )
+              try:
+                  # Try with the configured model ID first
+                  response = client.invoke_model(
+                      body=json.dumps(body),
+                      modelId=model_id,
+                      accept='application/json',
+                      contentType='application/json'
+                  )
+              except client.exceptions.ValidationException as e:
+                  if "inference profile" in str(e).lower():
+                      print(f"Model requires inference profile, trying known working models...")
+                      # Try Claude Haiku which typically works with on-demand
+                      try:
+                          response = client.invoke_model(
+                              body=json.dumps(body),
+                              modelId='anthropic.claude-3-haiku-20240307-v1:0',
+                              accept='application/json',
+                              contentType='application/json'
+                          )
+                      except Exception as haiku_error:
+                          print(f"Haiku failed: {haiku_error}, trying Claude Sonnet...")
+                          # Try with cross-region inference profile for Sonnet
+                          response = client.invoke_model(
+                              body=json.dumps(body),
+                              modelId='us.anthropic.claude-3-sonnet-20240229-v1:0',
+                              accept='application/json',
+                              contentType='application/json'
+                          )
+                  else:
+                      raise e
+              except Exception as e:
+                  print(f"Error with primary model, trying fallback: {e}")
+                  # Final fallback to Claude Haiku
+                  response = client.invoke_model(
+                      body=json.dumps(body),
+                      modelId='anthropic.claude-3-haiku-20240307-v1:0',
+                      accept='application/json',
+                      contentType='application/json'
+                  )
               
               response_body = json.loads(response.get('body').read())
               return response_body['content'][0]['text']
